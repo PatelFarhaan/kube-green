@@ -88,6 +88,8 @@ func TestGetSecret(t *testing.T) {
 	})
 }
 
+// TestUpsertSecrets verifies saved operation metadata and restore data for Secret
+// creation and updates, including empty workload sets and persistence failures.
 func TestUpsertSecrets(t *testing.T) {
 	testLogger := zap.New(zap.UseDevMode(true))
 

@@ -280,10 +280,13 @@ func cleanResourceVersion(list []unstructured.Unstructured) {
 	}
 }
 
+// TestListResourcesPagination checks complete snapshots, empty continuation pages,
+// and the distinction between an absent target and a failed paginated request.
 func TestListResourcesPagination(t *testing.T) {
 	first := mocks.Deployment(mocks.DeploymentOptions{Name: "first", Namespace: "test"}).Unstructured()
 	second := mocks.Deployment(mocks.DeploymentOptions{Name: "second", Namespace: "test"}).Unstructured()
 	listError := errors.New("later page unavailable")
+	notFound := apierrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "deployments"}, "")
 	type page struct {
 		items []unstructured.Unstructured
 		next  string
@@ -324,11 +327,16 @@ func TestListResourcesPagination(t *testing.T) {
 			err: listError,
 		},
 		{
-			name: "deleted target discards partial results",
+			name: "later page NotFound discards partial results and fails",
 			pages: []page{
 				{items: []unstructured.Unstructured{first}, next: "next-page"},
-				{err: apierrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "deployments"}, "")},
+				{err: notFound},
 			},
+			err: notFound,
+		},
+		{
+			name:  "first page NotFound confirms absent target",
+			pages: []page{{err: notFound}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

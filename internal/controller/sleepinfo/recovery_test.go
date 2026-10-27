@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -25,6 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+// TestRestoreSecretFailureDoesNotSleep verifies that failed restore-data writes
+// prevent workload and status changes, and that a later retry can sleep and wake.
 func TestRestoreSecretFailureDoesNotSleep(t *testing.T) {
 	for _, existingSecret := range []bool{false, true} {
 		for _, hasWorkloads := range []bool{false, true} {
@@ -84,6 +87,8 @@ func TestRestoreSecretFailureDoesNotSleep(t *testing.T) {
 	}
 }
 
+// TestPendingSleepRecovery checks that persisted state survives interrupted sleep,
+// list failures, and controller restarts without losing the original restore data.
 func TestPendingSleepRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -157,6 +162,8 @@ func TestPendingSleepRecovery(t *testing.T) {
 	}
 }
 
+// newRecoveryReconciler provides a scheduled SleepInfo and two awake deployments
+// with a client that can inject failures at persistence and workload boundaries.
 func newRecoveryReconciler(t *testing.T) (*SleepInfoReconciler, *testutil.PossiblyErroringFakeCtrlRuntimeClient, ctrl.Request, []*appsv1.Deployment) {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -188,6 +195,8 @@ func newRecoveryReconciler(t *testing.T) (*SleepInfoReconciler, *testutil.Possib
 	return r, c, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(sleepInfo)}, deployments
 }
 
+// assertDeploymentReplicas reads stored workload state so assertions do not rely
+// on the original fixture objects being updated by the reconciler.
 func assertDeploymentReplicas(t *testing.T, ctx context.Context, c client.Client, deployment *appsv1.Deployment, replicas int32) {
 	t.Helper()
 	actual := &appsv1.Deployment{}
@@ -195,6 +204,8 @@ func assertDeploymentReplicas(t *testing.T, ctx context.Context, c client.Client
 	require.Equal(t, replicas, *actual.Spec.Replicas)
 }
 
+// TestPendingSleepWithoutWakeSchedule verifies retries and later sleep cycles
+// retain restore patches until a wake schedule is configured.
 func TestPendingSleepWithoutWakeSchedule(t *testing.T) {
 	ctx := t.Context()
 	r, c, req, deployments := newRecoveryReconciler(t)
@@ -237,61 +248,93 @@ func TestPendingSleepWithoutWakeSchedule(t *testing.T) {
 	}
 }
 
+// TestPendingSleepRecoveryAfterListPageFailure preserves pending recovery state
+// after any later-page error, then retries from the first page to wake or confirm deletion.
 func TestPendingSleepRecoveryAfterListPageFailure(t *testing.T) {
-	ctx := t.Context()
-	r, c, req, deployments := newRecoveryReconciler(t)
-	c.ShouldError = func(method testutil.Method, obj runtime.Object) bool {
-		_, secret := obj.(*corev1.Secret)
-		return secret && method == testutil.Update
-	}
-	_, err := r.Reconcile(ctx, req)
-	require.Error(t, err)
-	for _, deployment := range deployments {
-		assertDeploymentReplicas(t, ctx, c, deployment, 0)
-	}
-	key := client.ObjectKey{Name: getSecretName(req.Name), Namespace: req.Namespace}
-	before := &corev1.Secret{}
-	require.NoError(t, c.Get(ctx, key, before))
-	require.Equal(t, sleepOperation, string(before.Data[pendingSleepKey]))
-
-	c.ShouldError = nil
-	underlying := c.Client
-	listError := errors.New("later page unavailable")
-	c.Client = interceptor.NewClient(underlying.(client.WithWatch), interceptor.Funcs{
-		List: func(ctx context.Context, delegate client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-			options := (&client.ListOptions{}).ApplyOptions(opts)
-			if options.Continue != "" {
-				return listError
-			}
-			if err := delegate.List(ctx, list, opts...); err != nil {
-				return err
-			}
-			result := list.(*unstructured.UnstructuredList)
-			result.Items = result.Items[:1]
-			result.SetContinue("next-page")
-			return nil
+	for _, tc := range []struct {
+		name          string
+		listError     error
+		targetDeleted bool
+	}{
+		{name: "temporary failure", listError: errors.New("later page unavailable")},
+		{
+			name:          "NotFound followed by confirmed deletion",
+			listError:     apierrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "deployments"}, ""),
+			targetDeleted: true,
 		},
-	})
-	r.Clock = mockClock{now: "2021-03-23T20:23:00Z", t: t}
-	_, err = r.Reconcile(ctx, req)
-	require.ErrorIs(t, err, listError)
-	after := &corev1.Secret{}
-	require.NoError(t, c.Get(ctx, key, after))
-	require.Equal(t, before.Data, after.Data)
-	for _, deployment := range deployments {
-		assertDeploymentReplicas(t, ctx, c, deployment, 0)
-	}
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			r, c, req, deployments := newRecoveryReconciler(t)
+			c.ShouldError = func(method testutil.Method, obj runtime.Object) bool {
+				_, secret := obj.(*corev1.Secret)
+				return secret && method == testutil.Update
+			}
+			_, err := r.Reconcile(ctx, req)
+			require.Error(t, err)
+			for _, deployment := range deployments {
+				assertDeploymentReplicas(t, ctx, c, deployment, 0)
+			}
+			key := client.ObjectKey{Name: getSecretName(req.Name), Namespace: req.Namespace}
+			before := &corev1.Secret{}
+			require.NoError(t, c.Get(ctx, key, before))
+			require.Equal(t, sleepOperation, string(before.Data[pendingSleepKey]))
 
-	c.Client = underlying
-	_, err = r.Reconcile(ctx, req)
-	require.NoError(t, err)
-	for _, deployment := range deployments {
-		assertDeploymentReplicas(t, ctx, c, deployment, 2)
+			c.ShouldError = nil
+			underlying := c.Client
+			c.Client = interceptor.NewClient(underlying.(client.WithWatch), interceptor.Funcs{
+				List: func(ctx context.Context, delegate client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					options := (&client.ListOptions{}).ApplyOptions(opts)
+					if options.Continue != "" {
+						return tc.listError
+					}
+					if err := delegate.List(ctx, list, opts...); err != nil {
+						return err
+					}
+					result := list.(*unstructured.UnstructuredList)
+					result.Items = result.Items[:1]
+					result.SetContinue("next-page")
+					return nil
+				},
+			})
+			r.Clock = mockClock{now: "2021-03-23T20:23:00Z", t: t}
+			_, err = r.Reconcile(ctx, req)
+			require.ErrorIs(t, err, tc.listError)
+			after := &corev1.Secret{}
+			require.NoError(t, c.Get(ctx, key, after))
+			require.Equal(t, before.Data, after.Data)
+			for _, deployment := range deployments {
+				assertDeploymentReplicas(t, ctx, c, deployment, 0)
+			}
+
+			c.Client = underlying
+			if tc.targetDeleted {
+				for _, deployment := range deployments {
+					require.NoError(t, c.Delete(ctx, deployment))
+				}
+				c.Client = interceptor.NewClient(underlying.(client.WithWatch), interceptor.Funcs{
+					List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, opts ...client.ListOption) error {
+						require.Empty(t, (&client.ListOptions{}).ApplyOptions(opts).Continue)
+						return tc.listError
+					},
+				})
+			}
+			_, err = r.Reconcile(ctx, req)
+			require.NoError(t, err)
+			if !tc.targetDeleted {
+				for _, deployment := range deployments {
+					assertDeploymentReplicas(t, ctx, c, deployment, 2)
+				}
+			}
+			require.NoError(t, c.Get(ctx, key, after))
+			require.NotContains(t, after.Data, pendingSleepKey)
+			require.NotContains(t, after.Data, originalJSONPatchDataKey)
+		})
 	}
-	require.NoError(t, c.Get(ctx, key, after))
-	require.NotContains(t, after.Data, pendingSleepKey)
 }
 
+// TestPendingSleepRecoveryAfterWorkloadsDeleted checks that a complete empty list
+// clears obsolete recovery data instead of retrying deleted workloads forever.
 func TestPendingSleepRecoveryAfterWorkloadsDeleted(t *testing.T) {
 	ctx := t.Context()
 	r, c, req, deployments := newRecoveryReconciler(t)

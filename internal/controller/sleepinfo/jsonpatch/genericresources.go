@@ -39,8 +39,8 @@ func newGenericResource(res resource.ResourceClient, patchData v1alpha1.Patch, r
 }
 
 // getListByNamespace collects every page before returning a resource snapshot.
-// Failed requests discard partial results. A missing target or a complete empty
-// list remains a successful result so deleted or excluded workloads can be forgotten.
+// Failed requests discard partial results. A target missing before pagination or
+// a complete empty list is a successful result, allowing obsolete state to be cleared.
 func (c genericResource) getListByNamespace(ctx context.Context, namespace string, target v1alpha1.PatchTarget) ([]unstructured.Unstructured, error) {
 	// TODO: manage optional version. So it will be possible to manage also multiple
 	// version of the same resource
@@ -63,6 +63,10 @@ func (c genericResource) getListByNamespace(ctx context.Context, namespace strin
 		resourceList := unstructured.UnstructuredList{}
 		resourceList.SetGroupVersionKind(restMapping.GroupVersionKind)
 		if err := c.Client.List(ctx, &resourceList, listOptions); err != nil {
+			// Confirm absence with a fresh list rather than an incomplete snapshot.
+			if listOptions.Continue != "" {
+				return nil, err
+			}
 			return nil, client.IgnoreNotFound(err)
 		}
 		resources = append(resources, resourceList.Items...)
