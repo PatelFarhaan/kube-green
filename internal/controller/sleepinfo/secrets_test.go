@@ -151,7 +151,7 @@ func TestUpsertSecrets(t *testing.T) {
 		err = resources.Sleep(context.Background())
 		require.NoError(t, err)
 
-		err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, nil, sleepInfoData, resources)
+		_, err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, nil, sleepInfoData, resources)
 		require.NoError(t, err)
 
 		secret, err := r.getSecret(context.Background(), secretName, namespace)
@@ -182,7 +182,7 @@ func TestUpsertSecrets(t *testing.T) {
 			err = resources.WakeUp(context.Background())
 			require.NoError(t, err)
 
-			err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, secret, sleepInfoData, resources)
+			_, err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, secret, sleepInfoData, resources)
 			require.NoError(t, err)
 
 			secret, err := r.getSecret(context.Background(), secretName, namespace)
@@ -229,7 +229,7 @@ func TestUpsertSecrets(t *testing.T) {
 		err = resources.Sleep(context.Background())
 		require.NoError(t, err)
 
-		err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, nil, sleepInfoData, resources)
+		_, err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, nil, sleepInfoData, resources)
 		require.NoError(t, err)
 
 		secret, err := r.getSecret(context.Background(), secretName, namespace)
@@ -281,7 +281,7 @@ func TestUpsertSecrets(t *testing.T) {
 			err = resources.Sleep(context.Background())
 			require.NoError(t, err)
 
-			err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, secret, sleepInfoData, resources)
+			_, err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, secret, sleepInfoData, resources)
 			require.NoError(t, err)
 
 			secret, err := r.getSecret(context.Background(), secretName, namespace)
@@ -326,7 +326,7 @@ func TestUpsertSecrets(t *testing.T) {
 		err = resources.Sleep(context.Background())
 		require.NoError(t, err)
 
-		err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, nil, sleepInfoData, resources)
+		_, err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, nil, sleepInfoData, resources)
 		require.NoError(t, err)
 
 		secret, err := r.getSecret(context.Background(), secretName, namespace)
@@ -378,7 +378,7 @@ func TestUpsertSecrets(t *testing.T) {
 		err = resources.Sleep(context.Background())
 		require.NoError(t, err)
 
-		err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, existentSecret, sleepInfoData, resources)
+		_, err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, existentSecret, sleepInfoData, resources)
 		require.NoError(t, err)
 
 		secret, err := r.getSecret(context.Background(), secretName, namespace)
@@ -428,7 +428,7 @@ func TestUpsertSecrets(t *testing.T) {
 		err = resources.Sleep(context.Background())
 		require.NoError(t, err)
 
-		err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, nil, sleepInfoData, resources)
+		_, err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, nil, sleepInfoData, resources)
 		require.EqualError(t, err, "error during create")
 	})
 
@@ -471,7 +471,7 @@ func TestUpsertSecrets(t *testing.T) {
 		err = resources.Sleep(context.Background())
 		require.NoError(t, err)
 
-		err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, existentSecret, sleepInfoData, resources)
+		_, err = r.upsertSecret(context.Background(), testLogger, now, secretName, namespace, sleepInfo, existentSecret, sleepInfoData, resources)
 		require.EqualError(t, err, "error during update")
 	})
 }

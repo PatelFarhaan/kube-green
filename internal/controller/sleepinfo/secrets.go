@@ -40,7 +40,7 @@ func (r SleepInfoReconciler) upsertSecret(
 	secret *v1.Secret,
 	sleepInfoData SleepInfoData,
 	resources resource.Resource,
-) error {
+) (*v1.Secret, error) {
 	logger.Info("manage secret", "name", secretName)
 
 	var newSecret = &v1.Secret{
@@ -67,6 +67,9 @@ func (r SleepInfoReconciler) upsertSecret(
 		StringData: make(map[string]string),
 	}
 	newSecret.StringData[lastScheduleKey] = now.Format(time.RFC3339)
+	if sleepInfoData.PendingSleep {
+		newSecret.StringData[pendingSleepKey] = sleepOperation
+	}
 	if resources.HasResource() {
 		newSecret.StringData[lastOperationKey] = sleepInfoData.CurrentOperationType
 	}
@@ -75,7 +78,7 @@ func (r SleepInfoReconciler) upsertSecret(
 		data, err := resources.GetOriginalInfoToSave()
 		if err != nil {
 			logger.Error(err, "failed to get original resource info to save")
-			return err
+			return nil, err
 		}
 		newSecret.Data = map[string][]byte{
 			originalJSONPatchDataKey: data,
@@ -84,14 +87,15 @@ func (r SleepInfoReconciler) upsertSecret(
 
 	if secret == nil {
 		if err := r.Create(ctx, newSecret); err != nil {
-			return err
+			return nil, err
 		}
 		logger.Info("secret created")
 	} else {
+		newSecret.ResourceVersion = secret.ResourceVersion
 		if err := r.Update(ctx, newSecret); err != nil {
-			return err
+			return nil, err
 		}
 		logger.Info("secret updated")
 	}
-	return nil
+	return newSecret, nil
 }

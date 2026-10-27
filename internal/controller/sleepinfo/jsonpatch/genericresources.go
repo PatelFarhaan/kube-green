@@ -20,6 +20,7 @@ type genericResource struct {
 	patchData      v1alpha1.Patch
 	restorePatches RestorePatches
 	data           []unstructured.Unstructured
+	sleepPatches   []*unstructured.Unstructured
 	// FIXME:
 	// this cache parameter is used to simplify the implementation (avoiding to repeat
 	// some error done in other resource implementation managing data) without change

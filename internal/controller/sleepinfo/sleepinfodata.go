@@ -14,6 +14,7 @@ import (
 
 type SleepInfoData struct {
 	LastSchedule                time.Time
+	PendingSleep                bool
 	CurrentOperationType        string
 	CurrentOperationSchedule    string
 	NextOperationSchedule       string
@@ -69,8 +70,9 @@ func getSleepInfoData(secret *v1.Secret, sleepInfo *kubegreenv1alpha1.SleepInfo)
 	sleepInfoData.LastSchedule = lastSchedule
 
 	lastOperation := string(data[lastOperationKey])
+	sleepInfoData.PendingSleep = string(data[pendingSleepKey]) == sleepOperation
 
-	if lastOperation == sleepOperation && wakeUpSchedule != "" {
+	if lastOperation == sleepOperation && wakeUpSchedule != "" && !sleepInfoData.PendingSleep {
 		sleepInfoData.CurrentOperationSchedule = wakeUpSchedule
 		sleepInfoData.NextOperationSchedule = sleepSchedule
 		sleepInfoData.CurrentOperationType = wakeUpOperation
@@ -103,4 +105,21 @@ func convertOldSecretDataToNewFormat(originalGenericResourceInfo map[string]json
 		originalGenericResourceInfo[kubegreenv1alpha1.CronJobTarget.String()] = data
 	}
 	return originalGenericResourceInfo, nil
+}
+
+// resumePendingSleep retries persisted work even after the scheduling delta. Once
+// its wake time has passed, restore any workloads already patched instead.
+func (s *SleepInfoData) resumePendingSleep(now time.Time, delta time.Duration, hasWakeUp bool) error {
+	if !s.PendingSleep || !hasWakeUp {
+		return nil
+	}
+	wakeSchedule, err := getCronParsed(s.NextOperationSchedule)
+	if err != nil {
+		return err
+	}
+	if !now.Before(wakeSchedule.Next(s.LastSchedule.Add(delta))) {
+		s.CurrentOperationType = wakeUpOperation
+		s.CurrentOperationSchedule, s.NextOperationSchedule = s.NextOperationSchedule, s.CurrentOperationSchedule
+	}
+	return nil
 }
