@@ -8,6 +8,9 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// getNextSchedule decides whether to execute and when to reconcile next.
+// Pending work executes outside the normal scheduling delta; a pending sleep
+// keeps its wake time anchored to the original persisted schedule.
 func (r *SleepInfoReconciler) getNextSchedule(log logr.Logger, data SleepInfoData, now time.Time) (bool, time.Time, time.Duration, error) {
 	scheduleDelta := time.Duration(r.SleepDelta) * time.Second
 	if data.PendingSleep {

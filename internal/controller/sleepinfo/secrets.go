@@ -31,6 +31,9 @@ func getSecretName(name string) string {
 	return fmt.Sprintf("sleepinfo-%s", name)
 }
 
+// upsertSecret persists operation state and, for sleep, prepared restore patches.
+// Callers persist PendingSleep before changing workloads and clear it after the
+// operation completes. The returned Secret carries the version for the next write.
 func (r SleepInfoReconciler) upsertSecret(
 	ctx context.Context,
 	logger logr.Logger,

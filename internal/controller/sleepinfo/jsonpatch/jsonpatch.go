@@ -28,6 +28,10 @@ type managedResources struct {
 
 type RestorePatches map[string]string
 
+// NewResources loads complete resource snapshots for the configured patch targets.
+// Listing errors for targets with saved restore patches stop reconciliation so
+// recovery state is retained. Successfully listed empty targets are omitted,
+// allowing deleted or newly excluded workloads to leave recovery state.
 func NewResources(ctx context.Context, res resource.ResourceClient, namespace string, restorePatches map[string]RestorePatches) (resource.Resource, error) {
 	if res.SleepInfo == nil {
 		return nil, fmt.Errorf("%w: sleepInfo is not provided", ErrJSONPatch)

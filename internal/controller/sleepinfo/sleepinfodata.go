@@ -29,6 +29,9 @@ func (s SleepInfoData) IsSleepOperation() bool {
 	return s.CurrentOperationType == sleepOperation
 }
 
+// getSleepInfoData restores operation state from current or legacy Secret data.
+// A pending sleep retains its original schedule and restore patches for recovery;
+// resumePendingSleep decides whether to finish sleeping or wake overdue workloads.
 func getSleepInfoData(secret *v1.Secret, sleepInfo *kubegreenv1alpha1.SleepInfo) (SleepInfoData, error) {
 	sleepSchedule, err := sleepInfo.GetSleepSchedule()
 	if err != nil {

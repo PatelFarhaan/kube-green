@@ -2,6 +2,7 @@ package sleepinfo
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/kube-green/kube-green/api/v1alpha1"
@@ -15,11 +16,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestRestoreSecretFailureDoesNotSleep(t *testing.T) {
@@ -232,4 +235,88 @@ func TestPendingSleepWithoutWakeSchedule(t *testing.T) {
 	for _, deployment := range deployments {
 		assertDeploymentReplicas(t, ctx, c, deployment, 2)
 	}
+}
+
+func TestPendingSleepRecoveryAfterListPageFailure(t *testing.T) {
+	ctx := t.Context()
+	r, c, req, deployments := newRecoveryReconciler(t)
+	c.ShouldError = func(method testutil.Method, obj runtime.Object) bool {
+		_, secret := obj.(*corev1.Secret)
+		return secret && method == testutil.Update
+	}
+	_, err := r.Reconcile(ctx, req)
+	require.Error(t, err)
+	for _, deployment := range deployments {
+		assertDeploymentReplicas(t, ctx, c, deployment, 0)
+	}
+	key := client.ObjectKey{Name: getSecretName(req.Name), Namespace: req.Namespace}
+	before := &corev1.Secret{}
+	require.NoError(t, c.Get(ctx, key, before))
+	require.Equal(t, sleepOperation, string(before.Data[pendingSleepKey]))
+
+	c.ShouldError = nil
+	underlying := c.Client
+	listError := errors.New("later page unavailable")
+	c.Client = interceptor.NewClient(underlying.(client.WithWatch), interceptor.Funcs{
+		List: func(ctx context.Context, delegate client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			options := (&client.ListOptions{}).ApplyOptions(opts)
+			if options.Continue != "" {
+				return listError
+			}
+			if err := delegate.List(ctx, list, opts...); err != nil {
+				return err
+			}
+			result := list.(*unstructured.UnstructuredList)
+			result.Items = result.Items[:1]
+			result.SetContinue("next-page")
+			return nil
+		},
+	})
+	r.Clock = mockClock{now: "2021-03-23T20:23:00Z", t: t}
+	_, err = r.Reconcile(ctx, req)
+	require.ErrorIs(t, err, listError)
+	after := &corev1.Secret{}
+	require.NoError(t, c.Get(ctx, key, after))
+	require.Equal(t, before.Data, after.Data)
+	for _, deployment := range deployments {
+		assertDeploymentReplicas(t, ctx, c, deployment, 0)
+	}
+
+	c.Client = underlying
+	_, err = r.Reconcile(ctx, req)
+	require.NoError(t, err)
+	for _, deployment := range deployments {
+		assertDeploymentReplicas(t, ctx, c, deployment, 2)
+	}
+	require.NoError(t, c.Get(ctx, key, after))
+	require.NotContains(t, after.Data, pendingSleepKey)
+}
+
+func TestPendingSleepRecoveryAfterWorkloadsDeleted(t *testing.T) {
+	ctx := t.Context()
+	r, c, req, deployments := newRecoveryReconciler(t)
+	c.ShouldError = func(method testutil.Method, obj runtime.Object) bool {
+		_, secret := obj.(*corev1.Secret)
+		return secret && method == testutil.Update
+	}
+	_, err := r.Reconcile(ctx, req)
+	require.Error(t, err)
+	key := client.ObjectKey{Name: getSecretName(req.Name), Namespace: req.Namespace}
+	secret := &corev1.Secret{}
+	require.NoError(t, c.Get(ctx, key, secret))
+	require.Equal(t, sleepOperation, string(secret.Data[pendingSleepKey]))
+	require.Contains(t, secret.Data, originalJSONPatchDataKey)
+
+	// A complete empty list is authoritative: removed workloads must not keep
+	// the operation pending forever just because their restore data was saved.
+	c.ShouldError = nil
+	for _, deployment := range deployments {
+		require.NoError(t, c.Delete(ctx, deployment))
+	}
+	r.Clock = mockClock{now: "2021-03-23T20:23:00Z", t: t}
+	_, err = r.Reconcile(ctx, req)
+	require.NoError(t, err)
+	require.NoError(t, c.Get(ctx, key, secret))
+	require.NotContains(t, secret.Data, pendingSleepKey)
+	require.NotContains(t, secret.Data, originalJSONPatchDataKey)
 }
